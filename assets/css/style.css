@@ -316,12 +316,54 @@ button, select, input { font: inherit; color: inherit; }
 .layer-panel .select { width: 100%; margin-top: 4px; }
 
 .legend {
-  align-self: flex-start; max-width: min(320px, 100%);
-  padding: 10px 12px; border-radius: 12px; background: rgb(10 16 30 / 0.88); border: 1px solid var(--border);
-  backdrop-filter: blur(10px); box-shadow: var(--shadow); font-size: 0.76rem; color: var(--text-2);
-  display: grid; gap: 8px;
+  align-self: flex-start; max-width: min(320px, calc(100vw - 32px));
+  border-radius: 12px; background: rgb(10 16 30 / 0.9); border: 1px solid var(--border);
+  backdrop-filter: blur(12px); box-shadow: var(--shadow); font-size: 0.76rem; color: var(--text-2);
+  display: flex; flex-direction: column; overflow: hidden;
+  max-height: calc(100svh - 180px);
+  transition: border-radius 0.2s, background 0.2s, border-color 0.2s;
 }
 .legend:empty { display: none; }
+
+.legend-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 12px; cursor: pointer; user-select: none;
+  font-weight: 600; font-size: 0.78rem; color: var(--text);
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.legend-header:hover { background: rgb(255 255 255 / 0.05); }
+.legend-title { display: inline-flex; align-items: center; gap: 6px; }
+.legend-title svg { stroke: var(--accent-2); flex: none; }
+
+.legend-toggle-btn {
+  border: 0; background: transparent; padding: 2px; cursor: pointer;
+  display: grid; place-items: center; border-radius: 6px; color: var(--muted);
+  transition: color 0.15s, transform 0.25s ease;
+}
+.legend-toggle-btn:hover { color: var(--text); }
+
+.legend-body {
+  padding: 10px 12px 12px; display: grid; gap: 10px;
+  overflow-y: auto; scrollbar-width: thin;
+}
+
+/* Collapsed state */
+.legend.is-collapsed {
+  border-radius: 999px;
+  background: rgb(10 16 30 / 0.88);
+}
+.legend.is-collapsed .legend-header {
+  padding: 6px 12px;
+  border-bottom: 0;
+}
+.legend.is-collapsed .legend-body {
+  display: none;
+}
+.legend.is-collapsed .legend-toggle-btn svg {
+  transform: rotate(-90deg);
+}
+
 .legend h4 { margin: 0 0 4px; font-size: 0.75rem; color: var(--text); font-weight: 600; }
 .legend-row { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .legend-item { display: inline-flex; align-items: center; gap: 5px; }
@@ -503,7 +545,9 @@ table.data tfoot td { font-weight: 700; color: var(--text); border-bottom: 0; bo
   .updated-pill #updated-text { display: none; }
   .chip { padding: 7px 11px; font-size: 0.8rem; }
   .layer-panel { width: calc(100% - 24px); }
-  .legend { max-width: 64%; padding: 8px 10px; font-size: 0.7rem; gap: 6px; }
+  .legend { max-width: min(280px, calc(100vw - 32px)); max-height: 48svh; font-size: 0.72rem; }
+  .legend-header { padding: 6px 10px; font-size: 0.74rem; }
+  .legend-body { padding: 8px 10px 10px; gap: 8px; }
   .legend h4 { font-size: 0.7rem; }
   .grid-4 { grid-template-columns: 1fr 1fr; }
   .page-head h1 { font-size: 1.45rem; }

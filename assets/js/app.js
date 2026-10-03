@@ -529,6 +529,10 @@ $('layer-btn').addEventListener('click', () => {
   $('layer-btn').setAttribute('aria-expanded', String(!p.hidden));
 });
 
+let legendCollapsed = localStorage.getItem('flood_kp_legend_collapsed') !== null
+  ? localStorage.getItem('flood_kp_legend_collapsed') === '1'
+  : (window.innerWidth <= 900);
+
 function renderLegend() {
   const parts = [];
   if (map.hasLayer(layers.incidents) && (state.incidents?.features?.length || 0) > 0) {
@@ -550,7 +554,41 @@ function renderLegend() {
   if (map.hasLayer(layers.radar)) {
     parts.push(`<div><h4>เรดาร์ฝน</h4><div class="legend-ramp" style="background:linear-gradient(90deg,#88ddee,#0099cc,#ffee00,#ff8c00,#ff0000,#c800c8)"></div><div class="legend-ramp-labels"><span>เบา</span><span>หนักมาก</span></div></div>`);
   }
-  $('legend').innerHTML = parts.join('');
+
+  const el = $('legend');
+  if (!parts.length) {
+    el.innerHTML = '';
+    return;
+  }
+
+  el.classList.toggle('is-collapsed', legendCollapsed);
+  el.innerHTML = `
+    <div class="legend-header" id="legend-header" role="button" tabindex="0" title="${legendCollapsed ? 'แตะเพื่อเปิดคำอธิบายสัญลักษณ์' : 'แตะเพื่อซ่อนคำอธิบายสัญลักษณ์'}">
+      <span class="legend-title">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        คำอธิบายสัญลักษณ์
+      </span>
+      <button class="legend-toggle-btn" id="legend-toggle-btn" aria-expanded="${!legendCollapsed}" aria-label="${legendCollapsed ? 'เปิดคำอธิบายสัญลักษณ์' : 'ซ่อนคำอธิบายสัญลักษณ์'}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </div>
+    <div class="legend-body">
+      ${parts.join('')}
+    </div>
+  `;
+
+  const toggle = (e) => {
+    e.stopPropagation();
+    legendCollapsed = !legendCollapsed;
+    localStorage.setItem('flood_kp_legend_collapsed', legendCollapsed ? '1' : '0');
+    el.classList.toggle('is-collapsed', legendCollapsed);
+    $('legend-toggle-btn')?.setAttribute('aria-expanded', String(!legendCollapsed));
+    $('legend-header')?.setAttribute('title', legendCollapsed ? 'แตะเพื่อเปิดคำอธิบายสัญลักษณ์' : 'แตะเพื่อซ่อนคำอธิบายสัญลักษณ์');
+  };
+
+  const header = $('legend-header');
+  header?.addEventListener('click', toggle);
+  header?.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle(e)));
 }
 
 // =============== Station dialog ===============
