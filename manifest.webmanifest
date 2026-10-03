@@ -1,0 +1,14 @@
+{
+  "name": "ติดตามน้ำท่วม จังหวัดกำแพงเพชร",
+  "short_name": "น้ำท่วม กพ.",
+  "description": "ระดับน้ำ ฝน พื้นที่น้ำท่วมจากดาวเทียม และพื้นที่เสี่ยง จังหวัดกำแพงเพชร",
+  "lang": "th",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#060a13",
+  "theme_color": "#060a13",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -1,0 +1,113 @@
+# ดึงข้อมูลน้ำท่วม จ.กำแพงเพชร อัตโนมัติ แล้วเผยแพร่ขึ้น GitHub Pages
+#  - ทุก 30 นาที : ระดับน้ำ/ฝน (ThaiWater), ดาวเทียม GISTDA (สคริปต์จำกัดเองไม่เกินทุก 3 ชม.), GloFAS (ทุก 6 ชม.)
+#  - วันละครั้ง (รอบแรกหลังเที่ยงคืน) : บันทึกสรุปรายวันลง branch `data` (สถิติย้อนหลัง)
+#  - ทุกเดือน : คำนวณพื้นที่เสี่ยงน้ำท่วมซ้ำซากใหม่
+name: อัปเดตข้อมูลน้ำท่วม
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+    - cron: '20 17 1 * *'  # 00:20 ICT วันที่ 1 – risk baseline
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: 'งานเพิ่มเติม คั่นด้วยช่องว่าง: archive, risk, force'
+        required: false
+        default: ''
+        type: string
+  push:
+    branches: [main]
+    paths-ignore: ['README.md', 'reference/**']
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: flood-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      TZ: Asia/Bangkok
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout persistent store (branch data)
+        uses: actions/checkout@v4
+        with:
+          ref: data
+          path: store
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Decide tasks
+        id: tasks
+        run: |
+          T=" ${{ inputs.tasks }} "
+          [ "${{ github.event.schedule }}" = '20 17 1 * *' ] && T="$T risk "
+          [ -f store/risk/freq_summary.json ] || T="$T risk "
+          # Archive yesterday (ICT) on the first run after midnight, or whenever it is still missing.
+          Y=$(date -d yesterday +%F)
+          [ -f "store/history/${Y:0:4}/$Y.json" ] || T="$T archive "
+          echo "list=$T" >> "$GITHUB_OUTPUT"
+          echo "Tasks: live$T"
+
+      - name: Risk baseline (monthly)
+        if: contains(steps.tasks.outputs.list, ' risk ')
+        continue-on-error: true
+        env:
+          GISTDA_KEY: ${{ secrets.GISTDA_KEY }}
+        run: node scripts/build-risk.mjs
+
+      - name: Live data
+        env:
+          GISTDA_KEY: ${{ secrets.GISTDA_KEY }}
+          FORCE_ALL: ${{ contains(steps.tasks.outputs.list, ' force ') && '1' || '0' }}
+        run: node scripts/build-live.mjs
+
+      - name: Daily archive
+        if: contains(steps.tasks.outputs.list, ' archive ')
+        continue-on-error: true
+        run: node scripts/archive-daily.mjs --backfill 7
+
+      - name: Save store to branch data
+        working-directory: store
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "store unchanged"
+          else
+            git commit -q -m "data: $(date '+%Y-%m-%d %H:%M') ICT"
+            git push origin HEAD:data
+          fi
+
+      - name: Build site
+        run: node scripts/build-site.mjs
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

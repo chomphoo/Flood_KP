@@ -1,0 +1,22 @@
+{
+  "name": "flood-kp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "เว็บติดตามสถานการณ์น้ำท่วม จังหวัดกำแพงเพชร (GitHub Pages + GitHub Actions)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "live": "node scripts/build-live.mjs",
+    "archive": "node scripts/archive-daily.mjs",
+    "risk": "node scripts/build-risk.mjs",
+    "site": "node scripts/build-site.mjs",
+    "build": "node scripts/build-live.mjs && node scripts/build-site.mjs",
+    "serve": "node scripts/serve.mjs",
+    "test": "node --test \"scripts/test/*.test.mjs\""
+  },
+  "dependencies": {
+    "h3-js": "^4.1.0"
+  }
+}

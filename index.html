@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ติดตามน้ำท่วม จังหวัดกำแพงเพชร – ระดับน้ำ ฝน และพื้นที่น้ำท่วมล่าสุด</title>
+  <meta name="description" content="แผนที่ติดตามสถานการณ์น้ำท่วมจังหวัดกำแพงเพชร อัปเดตทุก 30 นาที: ระดับน้ำแม่น้ำปิงและลำน้ำสาขา ปริมาณฝน 24 ชม. พื้นที่น้ำท่วมจากภาพดาวเทียม GISTDA พื้นที่เสี่ยงน้ำท่วมซ้ำซาก และคาดการณ์ปริมาณน้ำล่วงหน้า">
+  <meta name="theme-color" content="#060a13">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="ติดตามน้ำท่วม จังหวัดกำแพงเพชร">
+  <meta property="og:description" content="ระดับน้ำ ฝน พื้นที่น้ำท่วมจากดาวเทียม และพื้นที่เสี่ยง จ.กำแพงเพชร อัปเดตอัตโนมัติ">
+  <meta property="og:locale" content="th_TH">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232dd4bf'/%3E%3Cpath d='M16 6c-3 5-7 8.5-7 13a7 7 0 0 0 14 0c0-4.5-4-8-7-13z' fill='%23062a26'/%3E%3C/svg%3E">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="หน้าแรก">
+      <span class="brand-logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="#062a26"><path d="M12 2.5c-2.6 4.2-6.5 7.4-6.5 11.5a6.5 6.5 0 0 0 13 0c0-4.1-3.9-7.3-6.5-11.5z"/></svg></span>
+      <span>
+        <h1><span class="brand-long">ติดตาม</span>น้ำท่วม กำแพงเพชร</h1>
+        <small>ระดับน้ำ · ฝน · ภาพดาวเทียม · พื้นที่เสี่ยง</small>
+      </span>
+    </a>
+    <nav class="nav" aria-label="เมนูหลัก">
+      <a href="./" aria-current="page">แผนที่</a>
+      <a href="stats.html">สถิติ</a>
+      <a href="about.html">เกี่ยวกับ</a>
+    </nav>
+    <span class="updated-pill" id="updated-pill" title="เวลาที่ระบบอัปเดตข้อมูลล่าสุด">
+      <span class="live-dot" id="live-dot"></span><span class="label">อัปเดต</span> <span id="updated-text" class="num">กำลังโหลด…</span>
+    </span>
+  </header>
+
+  <main class="layout">
+    <aside class="panel" aria-label="รายงานสถานการณ์">
+      <section class="status-hero" id="status-hero" data-level="0" aria-live="polite">
+        <div class="eyebrow">สถานการณ์น้ำ จังหวัดกำแพงเพชร</div>
+        <div class="status-label"><span class="status-ring" aria-hidden="true"></span><span id="status-label">กำลังโหลด…</span></div>
+        <div class="status-desc" id="status-desc"></div>
+        <ul class="reasons" id="status-reasons"></ul>
+      </section>
+
+      <section class="kpis" id="kpis" aria-label="ตัวเลขสำคัญ"></section>
+
+      <section aria-label="รายการสถานการณ์">
+        <div class="tabs" role="tablist">
+          <button class="tab" role="tab" id="tab-now" aria-selected="true" aria-controls="pane-now">สถานการณ์ <span class="count" id="count-now">0</span></button>
+          <button class="tab" role="tab" id="tab-timeline" aria-selected="false" aria-controls="pane-timeline">ความเคลื่อนไหว</button>
+          <button class="tab" role="tab" id="tab-stations" aria-selected="false" aria-controls="pane-stations">สถานีวัดน้ำ</button>
+        </div>
+        <div class="toolbar" style="margin-top:10px">
+          <label for="amphoe-filter" class="visually-hidden">กรองตามอำเภอ</label>
+          <select id="amphoe-filter" class="select"><option value="">ทุกอำเภอ</option></select>
+        </div>
+        <div id="pane-now" role="tabpanel" aria-labelledby="tab-now" style="margin-top:10px"><ul class="feed" id="feed-now"></ul></div>
+        <div id="pane-timeline" role="tabpanel" aria-labelledby="tab-timeline" style="margin-top:10px" hidden><ul class="feed" id="feed-timeline"></ul></div>
+        <div id="pane-stations" role="tabpanel" aria-labelledby="tab-stations" style="margin-top:10px" hidden><div class="list" id="station-list"></div></div>
+      </section>
+
+      <section class="card">
+        <h2>สถานะแหล่งข้อมูล</h2>
+        <div class="sources" id="sources"></div>
+      </section>
+
+      <p class="disclaimer">
+        เว็บนี้รวบรวมข้อมูลจากหน่วยงานต่าง ๆ โดยอัตโนมัติเพื่อช่วยติดตามสถานการณ์ <b>ไม่ใช่ประกาศทางราชการ</b>
+        หากเกิดเหตุฉุกเฉินโทร <b>1784</b> (ปภ.) หรือ <b>1669</b> (เจ็บป่วยฉุกเฉิน) และติดตามประกาศจากจังหวัดกำแพงเพชร
+      </p>
+    </aside>
+
+    <section class="map-wrap" aria-label="แผนที่">
+      <div id="map" role="application" aria-label="แผนที่สถานการณ์น้ำจังหวัดกำแพงเพชร"></div>
+      <div class="map-ui">
+        <div class="chips" role="group" aria-label="ชั้นข้อมูลหลัก" style="padding-right:56px">
+          <button class="chip" id="chip-flood" aria-pressed="true"><span class="swatch"></span>น้ำท่วมตอนนี้ (ดาวเทียม)</button>
+          <button class="chip chip-risk" id="chip-risk" aria-pressed="false"><span class="swatch"></span>พื้นที่เสี่ยง (สถิติ 14 ปี)</button>
+          <button class="chip chip-radar" id="chip-radar" aria-pressed="false"><span class="swatch"></span>เรดาร์ฝน</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start">
+          <div class="radar-bar" id="radar-bar" hidden>
+            <button id="radar-play" aria-label="เล่น/หยุดภาพเรดาร์"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+            <input type="range" id="radar-range" min="0" max="0" value="0" aria-label="เลือกเวลาภาพเรดาร์">
+            <span id="radar-time" class="num">–</span>
+          </div>
+          <div class="legend" id="legend"></div>
+        </div>
+      </div>
+      <button class="layer-btn" id="layer-btn" aria-expanded="false" aria-controls="layer-panel" aria-label="ตั้งค่าชั้นข้อมูลแผนที่">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+      </button>
+      <div class="layer-panel" id="layer-panel" hidden>
+        <fieldset>
+          <legend>แผนที่ฐาน</legend>
+          <label><input type="radio" name="base" value="dark" checked> โหมดมืด</label>
+          <label><input type="radio" name="base" value="osm"> ถนน (OpenStreetMap)</label>
+          <label><input type="radio" name="base" value="sat"> ภาพถ่ายดาวเทียม</label>
+        </fieldset>
+        <fieldset>
+          <legend>ชั้นข้อมูล</legend>
+          <label><input type="checkbox" id="lyr-stations" checked> สถานีวัดระดับน้ำ</label>
+          <label><input type="checkbox" id="lyr-rain" checked> สถานีวัดฝน (24 ชม.)</label>
+          <label><input type="checkbox" id="lyr-flood" checked> พื้นที่น้ำท่วม (ดาวเทียม)</label>
+          <select class="select" id="flood-period" aria-label="ช่วงเวลาภาพดาวเทียม">
+            <option value="3days">3 วันล่าสุด</option>
+            <option value="7days">7 วันล่าสุด</option>
+            <option value="30days">30 วันล่าสุด</option>
+          </select>
+          <label><input type="checkbox" id="lyr-risk"> พื้นที่น้ำท่วมซ้ำซาก (2554–2567)</label>
+          <label><input type="checkbox" id="lyr-radar"> เรดาร์ฝน (RainViewer)</label>
+          <label><input type="checkbox" id="lyr-districts" checked> ขอบเขตอำเภอ</label>
+        </fieldset>
+      </div>
+    </section>
+  </main>
+
+  <dialog class="sheet" id="station-dialog" closedby="any" aria-labelledby="sd-title">
+    <div class="sheet-head">
+      <div>
+        <h2 id="sd-title">สถานี</h2>
+        <p id="sd-sub"></p>
+      </div>
+      <button class="sheet-close" id="sd-close" aria-label="ปิด"></button>
+    </div>
+    <div class="sheet-body">
+      <div class="facts" id="sd-facts"></div>
+      <div>
+        <h3 style="margin:0 0 8px;font-size:.9rem;color:var(--text-2)">ระดับน้ำ 7 วันที่ผ่านมา (ม.รทก.)</h3>
+        <div class="chart-box"><canvas id="sd-chart" aria-label="กราฟระดับน้ำ 7 วัน"></canvas></div>
+      </div>
+      <div id="sd-glofas" hidden>
+        <h3 style="margin:0 0 8px;font-size:.9rem;color:var(--text-2)">คาดการณ์ปริมาณน้ำแม่น้ำปิง (GloFAS, ลบ.ม./วินาที)</h3>
+        <div class="chart-box small"><canvas id="sd-glofas-chart" aria-label="กราฟคาดการณ์ปริมาณน้ำ"></canvas></div>
+        <p class="disclaimer" style="margin:6px 0 0">แบบจำลองระดับโลกความละเอียด ~5 กม. ใช้ดูแนวโน้มเท่านั้น ตัวเลขอาจต่างจากค่าที่สถานีวัดจริง</p>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="assets/vendor/leaflet/leaflet.js" defer></script>
+  <script src="assets/vendor/chart.umd.min.js" defer></script>
+  <script type="module" src="assets/js/app.js"></script>
+</body>
+</html>
