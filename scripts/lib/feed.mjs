@@ -13,7 +13,7 @@ const fmt = (n, d = 0) => (n == null ? '-' : Number(n).toLocaleString('th-TH', {
 const where = (s) => [s.tambon && `ต.${s.tambon}`, s.amphoe && `อ.${s.amphoe}`].filter(Boolean).join(' ');
 
 /** Build the list of current conditions from normalised source data. */
-export function buildConditions({ stations = [], rain = [], flood = null, glofas = [] }, nowIso = new Date().toISOString()) {
+export function buildConditions({ stations = [], rain = [], flood = null, glofas = [], incidents = null, tmd = null }, nowIso = new Date().toISOString()) {
   const out = [];
   for (const s of stations) {
     const base = { cat: 'water', source: 'สสน. (ThaiWater)', time: s.time || nowIso, lat: s.lat, lon: s.lon, amphoe: s.amphoe, ref: s.code };
@@ -53,6 +53,38 @@ export function buildConditions({ stations = [], rain = [], flood = null, glofas
       id: `glofas:${g.id}`, cat: 'forecast', sev: g.alert, source: 'Copernicus GloFAS', time: nowIso, lat: g.lat, lon: g.lon, ref: g.id,
       title: `คาดการณ์น้ำแม่น้ำปิงสูงกว่าปกติ — ${g.name}`,
       detail: `ปริมาณน้ำสูงสุดใน 7 วัน ~${fmt(g.peak7.q)} ลบ.ม./วินาที (${g.peak7.t}) เกินระดับคาบการเกิด ${g.alert === 2 ? '5' : '2'} ปี`,
+    });
+  }
+  const incFeatures = Array.isArray(incidents) ? incidents : (incidents?.features || []);
+  for (const inc of incFeatures) {
+    const p = inc.properties;
+    out.push({
+      id: p.id,
+      cat: 'incident',
+      sev: p.sev,
+      source: p.hasDdpm ? 'ประกาศ ปภ. / ข่าว' : 'รายงานข่าว',
+      time: p.time || nowIso,
+      lat: inc.geometry?.coordinates?.[1],
+      lon: inc.geometry?.coordinates?.[0],
+      amphoe: p.amphoe,
+      ref: p.id,
+      title: `รายงานสถานการณ์ — ${p.locName}`,
+      detail: `${p.title} (${p.source}${p.count > 1 ? ` และอีก ${p.count - 1} สำนัก` : ''})`,
+      url: p.url,
+    });
+  }
+  if (tmd?.maxRainNext24h && tmd.maxRainNext24h.rain >= 35) {
+    const isHeavy = tmd.maxRainNext24h.rain > 90;
+    out.push({
+      id: 'tmd:heavyrain',
+      cat: 'forecast',
+      sev: isHeavy ? 2 : 1,
+      source: 'กรมอุตุนิยมวิทยา (TMD)',
+      time: nowIso,
+      amphoe: tmd.maxRainNext24h.amphoe,
+      ref: 'tmd',
+      title: `พยากรณ์ฝนตก${isHeavy ? 'หนักมาก' : 'หนัก'} — อ.${tmd.maxRainNext24h.amphoe}`,
+      detail: `คาดการณ์ฝนสูงสุดใน 24 ชม. ~${fmt(tmd.maxRainNext24h.rain, 1)} มม. (${tmd.maxRainNext24h.condText})`,
     });
   }
   return out.sort((a, b) => b.sev - a.sev || String(b.time).localeCompare(String(a.time)));

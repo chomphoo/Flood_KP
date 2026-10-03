@@ -63,6 +63,14 @@
         <div id="pane-stations" role="tabpanel" aria-labelledby="tab-stations" style="margin-top:10px" hidden><div class="list" id="station-list"></div></div>
       </section>
 
+      <section class="card tmd-card" id="tmd-card" aria-label="พยากรณ์อากาศและฝน">
+        <div class="section-title">
+          <h2>พยากรณ์ฝน 7 วันล่วงหน้า (กรมอุตุฯ)</h2>
+          <span class="badge" id="tmd-badge">ทุกอำเภอ</span>
+        </div>
+        <div class="tmd-forecast-grid" id="tmd-forecast-grid"></div>
+      </section>
+
       <section class="card">
         <h2>สถานะแหล่งข้อมูล</h2>
         <div class="sources" id="sources"></div>
@@ -78,6 +86,7 @@
       <div id="map" role="application" aria-label="แผนที่สถานการณ์น้ำจังหวัดกำแพงเพชร"></div>
       <div class="map-ui">
         <div class="chips" role="group" aria-label="ชั้นข้อมูลหลัก" style="padding-right:56px">
+          <button class="chip chip-incident" id="chip-incident" aria-pressed="true"><span class="swatch"></span>จุดเสี่ยงจากข่าว/ปภ.</button>
           <button class="chip" id="chip-flood" aria-pressed="true"><span class="swatch"></span>น้ำท่วมตอนนี้ (ดาวเทียม)</button>
           <button class="chip chip-risk" id="chip-risk" aria-pressed="false"><span class="swatch"></span>พื้นที่เสี่ยง (สถิติ 14 ปี)</button>
           <button class="chip chip-radar" id="chip-radar" aria-pressed="false"><span class="swatch"></span>เรดาร์ฝน</button>
@@ -103,8 +112,10 @@
         </fieldset>
         <fieldset>
           <legend>ชั้นข้อมูล</legend>
+          <label><input type="checkbox" id="lyr-incidents" checked> จุดเสี่ยงจากข่าว/ประกาศ ปภ.</label>
           <label><input type="checkbox" id="lyr-stations" checked> สถานีวัดระดับน้ำ</label>
           <label><input type="checkbox" id="lyr-rain" checked> สถานีวัดฝน (24 ชม.)</label>
+          <label><input type="checkbox" id="lyr-tmd" checked> คาดการณ์ฝน TMD (รายอำเภอ)</label>
           <label><input type="checkbox" id="lyr-flood" checked> พื้นที่น้ำท่วม (ดาวเทียม)</label>
           <select class="select" id="flood-period" aria-label="ช่วงเวลาภาพดาวเทียม">
             <option value="3days">3 วันล่าสุด</option>

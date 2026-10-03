@@ -43,7 +43,7 @@ export const FLOOD_RAI = { flood: 1000, critical: 50000 };
  * Province-wide status from the latest observations. Returns the highest level any rule triggers,
  * with every triggered reason (Thai) so the UI can explain *why*.
  */
-export function provinceStatus({ stations = [], rain = [], floodRai3d = 0, glofas = [] }) {
+export function provinceStatus({ stations = [], rain = [], floodRai3d = 0, glofas = [], incidents = [], tmd = null }) {
   const reasons = [];
   let level = 0;
   const raise = (l, text) => {
@@ -65,6 +65,14 @@ export function provinceStatus({ stations = [], rain = [], floodRai3d = 0, glofa
   if (maxRain && maxRain.rain24h > 90) raise(1, `ฝนหนักมาก ${maxRain.rain24h} มม. ที่ ${maxRain.name}`);
   for (const g of glofas) {
     if (g.alert >= 1) raise(1, `คาดการณ์น้ำในแม่น้ำปิง (${g.name}) สูงกว่าปกติ`);
+  }
+  const incList = Array.isArray(incidents) ? incidents : (incidents?.features || []);
+  if (incList.length) {
+    const sev3 = incList.filter((i) => (i.properties?.sev ?? i.sev) >= 3);
+    if (sev3.length) raise(1, `มีรายงานสถานการณ์น้ำท่วม ${sev3.length} จุดจากข่าวและ ปภ.`);
+  }
+  if (tmd?.maxRainNext24h && tmd.maxRainNext24h.rain > 90) {
+    raise(1, `กรมอุตุฯ พยากรณ์ฝนตกหนักมาก ~${fmtInt(tmd.maxRainNext24h.rain)} มม. (อ.${tmd.maxRainNext24h.amphoe})`);
   }
   return { ...STATUS[level], reasons: reasons.sort((a, b) => b.level - a.level) };
 }

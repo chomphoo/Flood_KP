@@ -11,6 +11,8 @@ import { buildConditions, diffConditions, mergeTimeline, summariseRain } from '.
 import { fetchThaiWater, compactSeries } from './sources/thaiwater.mjs';
 import { fetchGistdaFlood, FLOOD_PERIODS } from './sources/gistda.mjs';
 import { fetchGlofas } from './sources/glofas.mjs';
+import { fetchTmdForecast } from './sources/tmd.mjs';
+import { fetchIncidents } from './sources/incidents.mjs';
 
 const OUT = CONFIG.dirs.out;
 const now = new Date();
@@ -117,15 +119,36 @@ const gf = await runSource('glofas', {
   fetcher: async () => ({ files: { 'glofas.json': { points: await fetchGlofas(climate) } } }),
 });
 
-// ---------- 4. Status + feed ----------
+// ---------- 4. TMD Weather & Rain Forecast ----------
+const tmdRes = await runSource('tmd', {
+  enabled: !!SECRETS.tmdToken,
+  files: ['tmd_forecast.json'],
+  fetcher: async () => {
+    const forecast = await fetchTmdForecast();
+    return { files: { 'tmd_forecast.json': forecast }, dataTime: forecast.updated };
+  },
+});
+const tmd = tmdRes?.['tmd_forecast.json'] || null;
+
+// ---------- 5. News & DDPM Incidents ----------
+const incRes = await runSource('incidents', {
+  files: ['incidents.geojson'],
+  fetcher: async () => {
+    const geo = await fetchIncidents();
+    return { files: { 'incidents.geojson': geo }, dataTime: geo.generatedAt };
+  },
+});
+const incidents = incRes?.['incidents.geojson'] || null;
+
+// ---------- 6. Status + feed ----------
 const stations = tw?.['stations.json']?.stations || [];
 const rain = tw?.['stations.json']?.rain || [];
 const floodSummary = gd?.['flood_summary.json']?.periods || null;
 const glofas = gf?.['glofas.json']?.points || [];
 const floodRai3d = floodSummary?.['3days']?.totals?.rai || 0;
 
-const status = provinceStatus({ stations, rain, floodRai3d, glofas });
-const conditions = buildConditions({ stations, rain, flood: floodSummary, glofas }, nowIso);
+const status = provinceStatus({ stations, rain, floodRai3d, glofas, incidents, tmd });
+const conditions = buildConditions({ stations, rain, flood: floodSummary, glofas, incidents, tmd }, nowIso);
 const prevFeed = await prevFile('feed.json');
 const events = diffConditions(prevFeed?.conditions || [], conditions, nowIso);
 const timeline = mergeTimeline(prevFeed?.timeline || [], events);
@@ -142,6 +165,8 @@ writeJson(path.join(OUT, 'status.json'), {
     floodTambons3d: floodSummary?.['3days']?.byAmphoe ? floodSummary['3days'].byAmphoe.reduce((n, a) => n + (a.tambons || 0), 0) : null,
     floodSceneDate: floodSummary?.['3days']?.sceneDate ?? null,
     glofasAlerts: glofas.filter((g) => g.alert > 0).length,
+    incidentPoints: incidents?.features?.length || 0,
+    tmdMaxRain24h: tmd?.maxRainNext24h || null,
   },
 });
 writeJson(path.join(OUT, 'feed.json'), { generatedAt: nowIso, conditions, timeline });

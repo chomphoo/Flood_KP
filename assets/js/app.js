@@ -7,6 +7,7 @@ import {
 const REFRESH_MS = 5 * 60 * 1000;
 const state = {
   status: null, stations: [], rain: [], feed: null, meta: null, floodSummary: null, glofas: [],
+  incidents: null, tmd: null,
   series: null, freq: null, amphoe: '', districtBounds: {}, generatedAt: null,
 };
 const $ = (id) => document.getElementById(id);
@@ -38,8 +39,10 @@ const riskRenderer = L.canvas({ pane: 'risk', padding: 0.3 });
 
 const layers = {
   districts: L.layerGroup().addTo(map),
+  incidents: L.layerGroup().addTo(map),
   stations: L.layerGroup().addTo(map),
   rain: L.layerGroup().addTo(map),
+  tmd: L.layerGroup().addTo(map),
   flood: L.layerGroup().addTo(map),
   risk: L.layerGroup(),
   radar: L.layerGroup(),
@@ -80,21 +83,24 @@ function setAmphoe(name, zoom) {
   state.amphoe = name;
   $('amphoe-filter').value = name;
   renderLists();
+  renderTmdForecast();
   if (zoom && name && state.districtBounds[name]) map.flyToBounds(state.districtBounds[name], { padding: [30, 30], duration: 0.8 });
 }
 
 // =============== Live data ===============
 async function loadLive() {
-  const [status, stations, feed, meta, floodSummary, glofas] = await Promise.all([
+  const [status, stations, feed, meta, floodSummary, glofas, incidents, tmd] = await Promise.all([
     getJson('live/status.json'),
     getJson('live/stations.json'),
     getJson('live/feed.json'),
     getJson('live/meta.json', { optional: true }),
     getJson('live/flood_summary.json', { optional: true }),
     getJson('live/glofas.json', { optional: true }),
+    getJson('live/incidents.geojson', { optional: true }),
+    getJson('live/tmd_forecast.json', { optional: true }),
   ]);
   Object.assign(state, {
-    status, feed, meta, floodSummary,
+    status, feed, meta, floodSummary, incidents, tmd,
     stations: stations.stations || [], rain: stations.rain || [], glofas: glofas?.points || [],
     generatedAt: status.generatedAt, series: null,
   });
@@ -107,9 +113,12 @@ function renderAll() {
   renderStatus();
   renderKpis();
   renderLists();
+  renderTmdForecast();
   renderSources();
+  drawIncidents();
   drawStations();
   drawRain();
+  drawTmd();
   renderLegend();
 }
 
@@ -200,6 +209,17 @@ function onFeedActivate(e) {
   const id = li.dataset.id;
   const c = [...(state.feed?.conditions || []), ...(state.feed?.timeline || [])].find((x) => x.id === id);
   if (!c) return;
+  if (c.cat === 'incident') {
+    setLayer('incidents', true);
+    const m = incidentMarkers.get(c.id || c.ref);
+    if (m) {
+      map.flyTo(m.getLatLng(), 13, { duration: 0.8 });
+      setTimeout(() => m.openPopup(), 850);
+    } else if (c.lat && c.lon) {
+      map.flyTo([c.lat, c.lon], 13, { duration: 0.8 });
+    }
+    return;
+  }
   if (c.cat === 'water' && c.ref) return openStation(c.ref, true);
   if (c.cat === 'flood' && state.districtBounds[c.amphoe]) {
     setLayer('flood', true);
@@ -229,7 +249,13 @@ for (const t of TABS) {
 }
 
 function renderSources() {
-  const NAMES = { thaiwater: 'ระดับน้ำ / ฝน — สสน. (ThaiWater)', gistda: 'ภาพดาวเทียมน้ำท่วม — GISTDA', glofas: 'คาดการณ์น้ำ — Copernicus GloFAS' };
+  const NAMES = {
+    thaiwater: 'ระดับน้ำ / ฝน — สสน. (ThaiWater)',
+    gistda: 'ภาพดาวเทียมน้ำท่วม — GISTDA',
+    glofas: 'คาดการณ์น้ำแม่น้ำปิง — Copernicus GloFAS',
+    tmd: 'พยากรณ์อากาศและฝน — กรมอุตุนิยมวิทยา (TMD)',
+    incidents: 'จุดเสี่ยงจากข่าวและประกาศ ปภ. (อัตโนมัติ)',
+  };
   const src = state.meta?.sources || {};
   $('sources').innerHTML = Object.entries(NAMES).map(([k, label]) => {
     const s = src[k] || {};
@@ -237,6 +263,122 @@ function renderSources() {
     const when = s.disabled ? (s.note || 'ปิดใช้งาน') : s.fetchedAt ? `ดึงข้อมูล ${ago(s.fetchedAt)}` : 'ไม่มีข้อมูล';
     return `<div class="source-row" data-state="${st}" title="${esc(s.error || '')}"><span class="dot"></span><span>${esc(label)}</span><span class="when">${esc(when)}</span></div>`;
   }).join('');
+}
+
+// =============== Incidents layer (Auto risk from news & DDPM) ===============
+function incidentIcon(sev) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="inc-marker" data-sev="${sev}"><span class="pulse"></span><span class="core">!</span></div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -14],
+  });
+}
+
+const incidentMarkers = new Map();
+function drawIncidents() {
+  layers.incidents.clearLayers();
+  incidentMarkers.clear();
+  const features = state.incidents?.features || [];
+  for (const f of features) {
+    const p = f.properties;
+    const [lon, lat] = f.geometry.coordinates;
+    const sev = SEV[p.sev] || SEV[1];
+    const m = L.marker([lat, lon], {
+      icon: incidentIcon(p.sev),
+      zIndexOffset: 1200 + (p.sev || 0) * 100,
+      keyboard: true,
+      title: p.locName,
+    });
+
+    const subArticles = (p.articles || []).slice(1, 4).map((a) =>
+      `<div><a href="${esc(a.url)}" target="_blank" rel="noopener">• ${esc(a.title)}</a> <span class="muted">(${esc(a.source)})</span></div>`
+    ).join('');
+
+    const html = `
+      <div class="inc-popup">
+        <div class="inc-popup-header">
+          <span class="inc-popup-loc">${esc(p.locName)}</span>
+          <span class="badge" style="--c:${sev.color}">${sev.label}</span>
+          ${p.hasDdpm ? '<span class="badge" style="--c:#f97316">ประกาศ ปภ.</span>' : ''}
+        </div>
+        <div class="inc-popup-title">${esc(p.title)}</div>
+        <div class="inc-popup-source">
+          <span>สำนักข่าว: <b>${esc(p.source)}</b>${p.count > 1 ? ` (+${p.count - 1} ข่าว)` : ''}</span>
+          <span title="${esc(fmtDateTime(p.time))}">${ago(p.time)}</span>
+        </div>
+        ${p.url ? `<a class="inc-popup-link" href="${esc(p.url)}" target="_blank" rel="noopener">อ่านข่าวต้นฉบับ <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}
+        ${subArticles ? `<div class="inc-popup-subnews"><b>ข่าวที่เกี่ยวข้อง:</b>${subArticles}</div>` : ''}
+      </div>
+    `;
+    m.bindPopup(html, { maxWidth: 320 });
+    m.addTo(layers.incidents);
+    incidentMarkers.set(p.id, m);
+  }
+}
+
+// =============== TMD Forecast (Weather & Rain) ===============
+function tmdWeatherIcon(cond) {
+  if (cond === 1) return '☀️';
+  if (cond === 2 || cond === 3) return '⛅';
+  if (cond === 4) return '☁️';
+  if (cond === 5) return '🌦️';
+  if (cond === 6) return '🌧️';
+  if (cond === 7 || cond === 9) return '⛈️';
+  if (cond === 8) return '🌩️';
+  return '🌤️';
+}
+
+function renderTmdForecast() {
+  const card = $('tmd-card');
+  if (!card) return;
+  const tmd = state.tmd;
+  if (!tmd) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  const ap = state.amphoe || 'เมืองกำแพงเพชร';
+  const daily = tmd.byAmphoe?.[ap] || tmd.province?.daily || [];
+  $('tmd-badge').textContent = state.amphoe ? `อ.${state.amphoe}` : 'อ.เมือง (ตัวแทนจังหวัด)';
+
+  const DOW = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
+  $('tmd-forecast-grid').innerHTML = daily.map((d, i) => {
+    const dateObj = new Date(d.date + 'T12:00:00+07:00');
+    const dow = i === 0 ? 'วันนี้' : i === 1 ? 'พรุ่งนี้' : DOW[dateObj.getDay()];
+    const rainClass = d.rain > 35 ? 'heavy' : d.rain > 10 ? 'mod' : d.rain > 0 ? 'light' : 'zero';
+    return `
+      <div class="tmd-day" title="${esc(d.date)}: ${esc(d.condText)} ฝน ${fmt(d.rain, 1)} มม. สูงสุด ${fmt(d.tcMax, 0)}°C ต่ำสุด ${fmt(d.tcMin, 0)}°C">
+        <span class="tmd-date">${dow}</span>
+        <span class="tmd-icon" aria-hidden="true">${tmdWeatherIcon(d.cond)}</span>
+        <span class="tmd-rain ${rainClass}">${d.rain > 0 ? `${fmt(d.rain, 0)}<small>มม.</small>` : '0'}</span>
+        <span class="tmd-temp">${fmt(d.tcMax, 0)}°/${fmt(d.tcMin, 0)}°</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function drawTmd() {
+  layers.tmd.clearLayers();
+  if (!state.tmd?.byAmphoe) return;
+  for (const [ap, list] of Object.entries(state.tmd.byAmphoe)) {
+    const bounds = state.districtBounds[ap];
+    if (!bounds) continue;
+    const center = bounds.getCenter();
+    const d0 = list[0];
+    if (!d0) continue;
+    const borderCol = d0.rain > 35 ? '#f43f5e' : d0.rain > 10 ? '#fb923c' : d0.rain > 0 ? '#38bdf8' : '#64748b';
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="background:rgba(10,16,30,0.88);border:1.5px solid ${borderCol};border-radius:12px;padding:2px 8px;font-size:11px;font-weight:600;color:#fff;display:inline-flex;align-items:center;gap:4px;box-shadow:0 3px 10px rgba(0,0,0,0.6);white-space:nowrap;backdrop-filter:blur(6px);transform:translate(-50%,-50%);cursor:pointer;">${tmdWeatherIcon(d0.cond)} <span>${d0.rain > 0 ? `${fmt(d0.rain, 0)} มม.` : 'ไร้ฝน'}</span></div>`,
+      iconSize: [0, 0],
+    });
+    const m = L.marker(center, { icon, interactive: true, zIndexOffset: 300 });
+    m.bindTooltip(`<b>อ.${esc(ap)}</b><br>TMD พยากรณ์ฝน 24 ชม.: <b>${fmt(d0.rain, 1)} มม.</b> (${esc(d0.condText)})<br>อุณหภูมิ: ${fmt(d0.tcMin, 0)}–${fmt(d0.tcMax, 0)} °C`, { direction: 'top' });
+    m.on('click', () => setAmphoe(ap, true));
+    m.addTo(layers.tmd);
+  }
 }
 
 // =============== Map layers ===============
@@ -345,7 +487,7 @@ $('radar-play').addEventListener('click', () => {
 });
 
 // ---------- Layer toggles ----------
-const CHIP = { flood: 'chip-flood', risk: 'chip-risk', radar: 'chip-radar' };
+const CHIP = { incidents: 'chip-incident', flood: 'chip-flood', risk: 'chip-risk', radar: 'chip-radar' };
 async function setLayer(name, on) {
   const group = layers[name];
   if (!group) return;
@@ -369,11 +511,11 @@ async function setLayer(name, on) {
   if (name === 'radar') $('radar-bar').hidden = !on || !radar.frames.length;
   renderLegend();
 }
-for (const name of ['stations', 'rain', 'flood', 'risk', 'radar', 'districts']) {
-  $(`lyr-${name}`).addEventListener('change', (e) => setLayer(name, e.target.checked));
+for (const name of ['incidents', 'stations', 'rain', 'tmd', 'flood', 'risk', 'radar', 'districts']) {
+  $(`lyr-${name}`)?.addEventListener('change', (e) => setLayer(name, e.target.checked));
 }
 for (const [name, id] of Object.entries(CHIP)) {
-  $(id).addEventListener('click', () => setLayer(name, $(id).getAttribute('aria-pressed') !== 'true'));
+  $(id)?.addEventListener('click', () => setLayer(name, $(id).getAttribute('aria-pressed') !== 'true'));
 }
 document.querySelectorAll('input[name="base"]').forEach((r) =>
   r.addEventListener('change', () => {
@@ -389,6 +531,9 @@ $('layer-btn').addEventListener('click', () => {
 
 function renderLegend() {
   const parts = [];
+  if (map.hasLayer(layers.incidents) && (state.incidents?.features?.length || 0) > 0) {
+    parts.push(`<div><h4>จุดเสี่ยงจากข่าว/ปภ. (${state.incidents.features.length} จุด)</h4><div class="legend-row"><span class="legend-item"><i style="background:var(--sev-3)"></i>อันตราย</span><span class="legend-item"><i style="background:var(--sev-2)"></i>เตือนภัย</span><span class="legend-item"><i style="background:var(--sev-1)"></i>เฝ้าระวัง</span></div></div>`);
+  }
   if (map.hasLayer(layers.stations)) {
     parts.push(`<div><h4>ระดับน้ำ (% ความจุลำน้ำ)</h4><div class="legend-row">${[5, 4, 3, 2, 1].map((l) => `<span class="legend-item"><i style="background:${LEVEL[l].color}"></i>${LEVEL[l].label}</span>`).join('')}</div></div>`);
   }

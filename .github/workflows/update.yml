@@ -78,6 +78,7 @@ jobs:
       - name: Live data
         env:
           GISTDA_KEY: ${{ secrets.GISTDA_KEY }}
+          TMD_TOKEN: ${{ secrets.TMD_TOKEN }}
           FORCE_ALL: ${{ contains(steps.tasks.outputs.list, ' force ') && '1' || '0' }}
         run: node scripts/build-live.mjs
 

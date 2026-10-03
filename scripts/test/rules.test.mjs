@@ -52,11 +52,13 @@ describe('provinceStatus', () => {
     assert.equal(provinceStatus({ floodRai3d: FLOOD_RAI.flood }).level, 2);
     assert.equal(provinceStatus({ floodRai3d: FLOOD_RAI.critical }).level, 3);
   });
-  test('watch signals: high water, fast rise, heavy rain, GloFAS', () => {
+  test('watch signals: high water, fast rise, heavy rain, GloFAS, incidents, TMD', () => {
     assert.equal(provinceStatus({ stations: [st(4)] }).level, 1);
     assert.equal(provinceStatus({ stations: [st(3, { change24h: 0.5 })] }).level, 1);
     assert.equal(provinceStatus({ rain: [{ name: 'r', rain24h: 95 }] }).level, 1);
     assert.equal(provinceStatus({ glofas: [{ name: 'P.7A', alert: 1 }] }).level, 1);
+    assert.equal(provinceStatus({ incidents: [{ properties: { sev: 3 } }] }).level, 1);
+    assert.equal(provinceStatus({ tmd: { maxRainNext24h: { rain: 95, amphoe: 'คลองลาน' } } }).level, 1);
   });
   test('reasons are sorted most severe first', () => {
     const s = provinceStatus({ stations: [st(4), st(5)], floodRai3d: 60000 });
@@ -81,11 +83,17 @@ describe('buildConditions', () => {
     ],
     flood: { '3days': { sceneDate: '2026-10-02', byAmphoe: [{ amphoe: 'คลองขลุง', rai: 6000, tambons: 3 }, { amphoe: 'ไทรงาม', rai: 0 }] } },
     glofas: [{ id: 'P.7A', name: 'P.7A', alert: 1, peak7: { q: 1100, t: '2026-10-05' } }, { id: 'P.15', alert: 0 }],
+    incidents: [
+      { properties: { id: 'inc:test', sev: 2, locName: 'ต.นครชุม', amphoe: 'เมืองกำแพงเพชร', title: 'น้ำเอ่อล้น', source: 'ข่าว', hasDdpm: false, time: now } },
+    ],
+    tmd: {
+      maxRainNext24h: { rain: 45, amphoe: 'คลองลาน', condText: 'ฝนฟ้าคะนอง' },
+    },
   }, now);
   const ids = conds.map((c) => c.id);
 
   test('creates one condition per triggered rule', () => {
-    assert.deepEqual(new Set(ids), new Set(['wl:A', 'rise:B', 'rain:R1', 'rain:R2', 'flood:คลองขลุง', 'glofas:P.7A']));
+    assert.deepEqual(new Set(ids), new Set(['wl:A', 'rise:B', 'rain:R1', 'rain:R2', 'flood:คลองขลุง', 'glofas:P.7A', 'inc:test', 'tmd:heavyrain']));
   });
   test('severity mapping', () => {
     const sev = Object.fromEntries(conds.map((c) => [c.id, c.sev]));
@@ -94,6 +102,8 @@ describe('buildConditions', () => {
     assert.equal(sev['rain:R1'], 2);
     assert.equal(sev['rain:R2'], 1);
     assert.equal(sev['flood:คลองขลุง'], 2);
+    assert.equal(sev['inc:test'], 2);
+    assert.equal(sev['tmd:heavyrain'], 1);
   });
   test('sorted by severity', () => {
     const sevs = conds.map((c) => c.sev);

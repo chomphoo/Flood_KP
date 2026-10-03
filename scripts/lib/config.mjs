@@ -31,6 +31,8 @@ export const CONFIG = {
     thaiwater: 0,
     gistda: 180,
     glofas: 360,
+    tmd: 180,
+    incidents: 60,
   },
   /**
    * GloFAS forecast points on the Ping river. `lat/lon` = gauge (for display);
@@ -59,4 +61,6 @@ export const CONFIG = {
 
 export const SECRETS = {
   gistdaKey: process.env.GISTDA_KEY || process.env.GISTDA_API_KEY || '',
+  tmdToken: process.env.TMD_TOKEN || process.env.TMD_NWP_TOKEN || '',
 };
+
