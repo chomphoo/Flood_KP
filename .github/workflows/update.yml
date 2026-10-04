@@ -79,6 +79,8 @@ jobs:
         env:
           GISTDA_KEY: ${{ secrets.GISTDA_KEY }}
           TMD_TOKEN: ${{ secrets.TMD_TOKEN }}
+          # แจ้งเตือนผ่าน ntfy.sh (ฟรี) – เปลี่ยนชื่อหัวข้อได้ที่ Settings → Variables → NTFY_TOPIC
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'floodkp-kamphaengphet' }}
           FORCE_ALL: ${{ contains(steps.tasks.outputs.list, ' force ') && '1' || '0' }}
         run: node scripts/build-live.mjs
 

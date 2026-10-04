@@ -13,6 +13,10 @@ import { fetchGistdaFlood, FLOOD_PERIODS } from './sources/gistda.mjs';
 import { fetchGlofas } from './sources/glofas.mjs';
 import { fetchTmdForecast } from './sources/tmd.mjs';
 import { fetchIncidents } from './sources/incidents.mjs';
+import { notifyNtfy } from './lib/notify.mjs';
+
+/** Bump when condition ids change, so the first run after a change does not push a burst of "new" events. */
+const FEED_SCHEMA = 2;
 
 const OUT = CONFIG.dirs.out;
 const now = new Date();
@@ -152,6 +156,10 @@ const conditions = buildConditions({ stations, rain, flood: floodSummary, glofas
 const prevFeed = await prevFile('feed.json');
 const events = diffConditions(prevFeed?.conditions || [], conditions, nowIso);
 const timeline = mergeTimeline(prevFeed?.timeline || [], events);
+let notify = { sent: false, reason: 'no previous feed' };
+if (prevFeed && (prevFeed.schema || 1) >= FEED_SCHEMA) notify = await notifyNtfy(events);
+else if (prevFeed) notify = { sent: false, reason: 'feed schema changed' };
+console.log('notify:', JSON.stringify(notify));
 
 const levelCounts = Object.fromEntries([1, 2, 3, 4, 5].map((l) => [l, stations.filter((s) => s.level === l).length]));
 writeJson(path.join(OUT, 'status.json'), {
@@ -168,8 +176,9 @@ writeJson(path.join(OUT, 'status.json'), {
     incidentPoints: incidents?.features?.length || 0,
     tmdMaxRain24h: tmd?.maxRainNext24h || null,
   },
+  notify: { ntfyTopic: CONFIG.ntfyTopic, lastPush: notify.sent ? nowIso : null },
 });
-writeJson(path.join(OUT, 'feed.json'), { generatedAt: nowIso, conditions, timeline });
+writeJson(path.join(OUT, 'feed.json'), { schema: FEED_SCHEMA, generatedAt: nowIso, conditions, timeline });
 writeJson(path.join(OUT, 'meta.json'), meta, { pretty: true });
 
 console.log(`status: ${status.label} | stations ${stations.length} | rain ${rain.length} | conditions ${conditions.length} | new events ${events.length}`);

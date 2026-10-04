@@ -7,11 +7,98 @@ export async function getJson(path, { optional = false } = {}) {
   try {
     const res = await fetch(DATA + path, { cache: 'no-cache' });
     if (!res.ok) throw new Error(`${res.status} ${path}`);
+    if (res.headers.get('x-sw-cache')) offlineState.usedCache = true;
     return await res.json();
   } catch (err) {
     if (optional) return null;
     throw err;
   }
+}
+/** Set by getJson when the service worker answered from its offline cache. */
+export const offlineState = { usedCache: false };
+
+/** Decode the compact hexagon format written by scripts/lib/pack.mjs (keep in sync). */
+export function unpackGeo(p) {
+  return {
+    ...(p.meta || {}),
+    type: 'FeatureCollection',
+    features: p.f.map(([props, g]) => {
+      const properties = {};
+      p.keys.forEach((k, i) => {
+        const v = props[i];
+        properties[k] = p.dict[k] && v != null ? p.dict[k][v] : v;
+      });
+      const ring = [];
+      let x = 0;
+      let y = 0;
+      for (let i = 0; i < g.length; i += 2) {
+        x += g[i];
+        y += g[i + 1];
+        ring.push([x / p.scale, y / p.scale]);
+      }
+      if (ring.length) ring.push(ring[0]);
+      return { type: 'Feature', properties, geometry: { type: 'Polygon', coordinates: [ring] } };
+    }),
+  };
+}
+
+/** Load `x.geojson` via its smaller `x.pack.json` copy when available. */
+export async function getGeo(path, { optional = false } = {}) {
+  const packed = await getJson(path.replace(/\.geojson$/, '.pack.json'), { optional: true });
+  if (packed?.v === 1) return unpackGeo(packed);
+  return getJson(path, { optional });
+}
+
+/** Load a classic script once (used to lazy-load Chart.js). */
+const scriptCache = {};
+export function loadScript(src) {
+  return (scriptCache[src] ??= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => {
+      delete scriptCache[src];
+      reject(new Error(`load failed: ${src}`));
+    };
+    document.head.append(s);
+  }));
+}
+
+/** Water-level trend from the 24 h change (m). */
+export function trendArrow(change) {
+  if (change == null || Number.isNaN(+change)) return { sym: '', cls: 'flat', label: 'ไม่มีข้อมูลแนวโน้ม' };
+  if (change >= 0.5) return { sym: '⇈', cls: 'up2', label: `ขึ้นเร็ว ${signed(change)} ม./24 ชม.` };
+  if (change >= 0.05) return { sym: '↑', cls: 'up', label: `ขึ้น ${signed(change)} ม./24 ชม.` };
+  if (change <= -0.05) return { sym: '↓', cls: 'down', label: `ลง ${signed(change)} ม./24 ชม.` };
+  return { sym: '→', cls: 'flat', label: 'ทรงตัว' };
+}
+export const trendHtml = (change) => {
+  const t = trendArrow(change);
+  return t.sym ? `<span class="trend trend-${t.cls}" title="${esc(t.label)}" aria-label="${esc(t.label)}">${t.sym}</span>` : '';
+};
+
+// ---------- geometry ----------
+/** Great-circle distance in km. */
+export function distKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const r = Math.PI / 180;
+  const a = Math.sin(((lat2 - lat1) * r) / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(((lon2 - lon1) * r) / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function inRing(x, y, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+/** Point-in-(Multi)Polygon for GeoJSON geometry, holes respected. */
+export function pointInGeom(lon, lat, geom) {
+  if (!geom) return false;
+  const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.type === 'MultiPolygon' ? geom.coordinates : [];
+  return polys.some((rings) => inRing(lon, lat, rings[0]) && !rings.slice(1).some((h) => inRing(lon, lat, h)));
 }
 
 // ---------- formatting (Thai locale, Buddhist calendar) ----------
@@ -87,6 +174,13 @@ export const ICONS = {
   forecast: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>',
   ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
   close: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  incident: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+  locate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>',
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>',
+  phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>',
+  road: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22 8 2M20 22 16 2M12 4v3M12 11v3M12 18v3"/></svg>',
 };
 
 /** Light-dismiss fallback for <dialog closedby="any"> (Safari has no `closedby` yet). */

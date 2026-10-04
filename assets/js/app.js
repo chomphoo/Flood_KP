@@ -1,14 +1,17 @@
 // Flood KP – main map page
 import {
-  getJson, fmt, signed, fmtDateTime, fmtDate, fmtTime, ago, esc, beYear,
+  getJson, getGeo, loadScript, fmt, signed, fmtDateTime, fmtDate, fmtTime, ago, esc, beYear,
   LEVEL, SEV, rainColor, rainLabel, freqColor, ICONS, enableLightDismiss, chartDefaults,
+  trendArrow, trendHtml, offlineState,
 } from './common.js';
+import { initExtras, onLiveData } from './extras.js';
 
 const REFRESH_MS = 5 * 60 * 1000;
 const state = {
   status: null, stations: [], rain: [], feed: null, meta: null, floodSummary: null, glofas: [],
   incidents: null, tmd: null,
-  series: null, freq: null, amphoe: '', districtBounds: {}, generatedAt: null,
+  series: null, freq: null, amphoe: '', districtBounds: {}, districtCenters: {}, generatedAt: null,
+  amphoeGeo: null, gazetteer: [],
 };
 const $ = (id) => document.getElementById(id);
 
@@ -52,7 +55,13 @@ map.on('zoomend', () => map.getContainer().classList.toggle('hide-labels', map.g
 
 // =============== Static layers ===============
 async function loadStatic() {
-  const [amphoe, province] = await Promise.all([getJson('static/amphoe.geojson'), getJson('static/province.geojson', { optional: true })]);
+  const [amphoe, province, gaz] = await Promise.all([
+    getJson('static/amphoe.geojson'),
+    getJson('static/province.geojson', { optional: true }),
+    getJson('static/gazetteer.json', { optional: true }),
+  ]);
+  state.amphoeGeo = amphoe;
+  state.gazetteer = gaz?.entries || [];
   if (province?.features?.length) {
     const world = [[-90, -180], [-90, 180], [90, 180], [90, -180]];
     const holes = province.features[0].geometry.coordinates.map((poly) => poly[0].map(([x, y]) => [y, x]));
@@ -61,7 +70,7 @@ async function loadStatic() {
     map.fitBounds(outline.getBounds(), { padding: [20, 20] });
   }
   const sel = $('amphoe-filter');
-  L.geoJSON(amphoe, {
+  const amphoeLayer = L.geoJSON(amphoe, {
     pane: 'districts',
     style: { color: '#94a3b8', weight: 1, opacity: 0.55, dashArray: '4 4', fillOpacity: 0, fillColor: '#2dd4bf' },
     onEachFeature: (f, layer) => {
@@ -73,6 +82,10 @@ async function loadStatic() {
       layer.on('click', () => setAmphoe(name, true));
     },
   }).addTo(layers.districts);
+  // Where Leaflet places the district name (polygon centre) – TMD pills are anchored just below it.
+  amphoeLayer.eachLayer((layer) => {
+    state.districtCenters[layer.feature.properties.name] = layer.getCenter();
+  });
   for (const f of [...amphoe.features].sort((a, b) => a.properties.name.localeCompare(b.properties.name, 'th'))) {
     sel.add(new Option(`อ.${f.properties.name}`, f.properties.name));
   }
@@ -89,6 +102,7 @@ function setAmphoe(name, zoom) {
 
 // =============== Live data ===============
 async function loadLive() {
+  offlineState.usedCache = false;
   const [status, stations, feed, meta, floodSummary, glofas, incidents, tmd] = await Promise.all([
     getJson('live/status.json'),
     getJson('live/stations.json'),
@@ -105,6 +119,7 @@ async function loadLive() {
     generatedAt: status.generatedAt, series: null,
   });
   renderAll();
+  onLiveData();
   await drawFlood();
 }
 
@@ -164,11 +179,11 @@ const CHANGE = { new: 'ใหม่', up: 'รุนแรงขึ้น', down
 const byAmphoe = (x) => !state.amphoe || x.amphoe === state.amphoe;
 
 function feedItem(c, { timeline = false } = {}) {
-  const icon = c.change === 'resolved' ? ICONS.ok : ICONS[c.cat] || ICONS.water;
+  const icon = c.change === 'resolved' || c.phase === 'recovering' ? ICONS.ok : ICONS[c.cat] || ICONS.water;
   const sev = SEV[c.sev] || SEV[0];
   const when = timeline ? c.at : c.time;
   return `
-    <li class="feed-item" data-sev="${c.sev}" data-change="${c.change || ''}" data-id="${esc(c.id)}" tabindex="0" role="button">
+    <li class="feed-item" data-sev="${c.sev}" data-change="${c.change || ''}" data-phase="${esc(c.phase || '')}" data-id="${esc(c.id)}" tabindex="0" role="button">
       <span class="feed-icon" aria-hidden="true">${icon}</span>
       <div>
         <div class="feed-title">${esc(c.title)}</div>
@@ -196,7 +211,7 @@ function renderLists() {
     ? sts.map((s) => `
       <button class="station-row" data-lv="${s.level}" data-code="${esc(s.code)}">
         <span class="st-name">${esc(s.name)} <span class="muted" style="font-weight:400">(${esc(s.code)})</span></span>
-        <span class="st-pct">${fmt(s.pct)}%</span>
+        <span class="st-pct">${trendHtml(s.change24h)} ${fmt(s.pct)}%</span>
         <span class="st-sub">${esc(LEVEL[s.level]?.label || '-')} · ${s.toBank != null ? (s.toBank >= 0 ? `ต่ำกว่าตลิ่ง ${fmt(s.toBank, 2)} ม.` : `สูงกว่าตลิ่ง ${fmt(-s.toBank, 2)} ม.`) : ''} · อ.${esc(s.amphoe)}</span>
         <span class="st-bar" aria-hidden="true"><i style="width:${Math.max(2, Math.min(100, ((s.pct ?? 0) / 130) * 100))}%"></i></span>
       </button>`).join('')
@@ -210,6 +225,11 @@ function onFeedActivate(e) {
   const c = [...(state.feed?.conditions || []), ...(state.feed?.timeline || [])].find((x) => x.id === id);
   if (!c) return;
   if (c.cat === 'incident') {
+    // Province-level news has no map position – open the article instead.
+    if (c.id === 'news:province') {
+      if (c.url) window.open(c.url, '_blank', 'noopener');
+      return;
+    }
     setLayer('incidents', true);
     const m = incidentMarkers.get(c.id || c.ref);
     if (m) {
@@ -266,10 +286,11 @@ function renderSources() {
 }
 
 // =============== Incidents layer (Auto risk from news & DDPM) ===============
-function incidentIcon(sev) {
+function incidentIcon(sev, phase) {
+  const recovering = phase === 'recovering';
   return L.divIcon({
     className: '',
-    html: `<div class="inc-marker" data-sev="${sev}"><span class="pulse"></span><span class="core">!</span></div>`,
+    html: `<div class="inc-marker" data-sev="${sev}" data-phase="${recovering ? 'recovering' : 'active'}">${recovering ? '' : '<span class="pulse"></span>'}<span class="core">${recovering ? '↓' : '!'}</span></div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
     popupAnchor: [0, -14],
@@ -284,10 +305,11 @@ function drawIncidents() {
   for (const f of features) {
     const p = f.properties;
     const [lon, lat] = f.geometry.coordinates;
-    const sev = SEV[p.sev] || SEV[1];
+    const recovering = p.phase === 'recovering';
+    const sev = recovering ? { label: 'กำลังคลี่คลาย', color: 'var(--ok)' } : SEV[p.sev] || SEV[1];
     const m = L.marker([lat, lon], {
-      icon: incidentIcon(p.sev),
-      zIndexOffset: 1200 + (p.sev || 0) * 100,
+      icon: incidentIcon(p.sev, p.phase),
+      zIndexOffset: (recovering ? 900 : 1200) + (p.sev || 0) * 100,
       keyboard: true,
       title: p.locName,
     });
@@ -303,13 +325,15 @@ function drawIncidents() {
           <span class="badge" style="--c:${sev.color}">${sev.label}</span>
           ${p.hasDdpm ? '<span class="badge" style="--c:#f97316">ประกาศ ปภ.</span>' : ''}
         </div>
+        ${recovering ? '<div class="inc-popup-note">ข่าวล่าสุดระบุว่าน้ำเริ่มลด / อยู่ระหว่างฟื้นฟู โปรดติดตามประกาศในพื้นที่</div>' : ''}
         <div class="inc-popup-title">${esc(p.title)}</div>
         <div class="inc-popup-source">
-          <span>สำนักข่าว: <b>${esc(p.source)}</b>${p.count > 1 ? ` (+${p.count - 1} ข่าว)` : ''}</span>
+          <span>แหล่งข่าว: <b>${esc(p.source)}</b>${p.count > 1 ? ` (+${p.count - 1} ข่าว)` : ''}</span>
           <span title="${esc(fmtDateTime(p.time))}">${ago(p.time)}</span>
         </div>
         ${p.url ? `<a class="inc-popup-link" href="${esc(p.url)}" target="_blank" rel="noopener">อ่านข่าวต้นฉบับ <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}
         ${subArticles ? `<div class="inc-popup-subnews"><b>ข่าวที่เกี่ยวข้อง:</b>${subArticles}</div>` : ''}
+        <div class="inc-popup-foot muted">ตำแหน่งเป็นจุดกึ่งกลางตำบล/อำเภอที่ข่าวกล่าวถึง ไม่ใช่จุดเกิดเหตุแน่นอน</div>
       </div>
     `;
     m.bindPopup(html, { maxWidth: 320 });
@@ -319,16 +343,14 @@ function drawIncidents() {
 }
 
 // =============== TMD Forecast (Weather & Rain) ===============
+// TMD condition codes (official table): 1 แจ่มใส 2 เมฆบางส่วน 3 เมฆเป็นส่วนมาก 4 เมฆมาก 5 ฝนเล็กน้อย 6 ฝนปานกลาง 7 ฝนหนัก
+// 8 ฝนฟ้าคะนอง 9 หนาวจัด 10 หนาว 11 เย็น 12 ร้อนจัด
 function tmdWeatherIcon(cond) {
-  if (cond === 1) return '☀️';
-  if (cond === 2 || cond === 3) return '⛅';
-  if (cond === 4) return '☁️';
-  if (cond === 5) return '🌦️';
-  if (cond === 6) return '🌧️';
-  if (cond === 7 || cond === 9) return '⛈️';
-  if (cond === 8) return '🌩️';
-  return '🌤️';
+  const ICON = { 1: '☀️', 2: '🌤️', 3: '⛅', 4: '☁️', 5: '🌦️', 6: '🌧️', 7: '🌧️', 8: '⛈️', 9: '🥶', 10: '❄️', 11: '🌬️', 12: '🥵' };
+  return ICON[cond] || '🌤️';
 }
+
+const fmtHour = new Intl.DateTimeFormat('th-TH', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
 
 function renderTmdForecast() {
   const card = $('tmd-card');
@@ -349,7 +371,7 @@ function renderTmdForecast() {
     const dow = i === 0 ? 'วันนี้' : i === 1 ? 'พรุ่งนี้' : DOW[dateObj.getDay()];
     const rainClass = d.rain > 35 ? 'heavy' : d.rain > 10 ? 'mod' : d.rain > 0 ? 'light' : 'zero';
     return `
-      <div class="tmd-day" title="${esc(d.date)}: ${esc(d.condText)} ฝน ${fmt(d.rain, 1)} มม. สูงสุด ${fmt(d.tcMax, 0)}°C ต่ำสุด ${fmt(d.tcMin, 0)}°C">
+      <div class="tmd-day" title="${esc(fmtDate(d.date))}: ${esc(d.condText)} ฝนทั้งวัน ${fmt(d.rain, 1)} มม. สูงสุด ${fmt(d.tcMax, 0)}°C ต่ำสุด ${fmt(d.tcMin, 0)}°C">
         <span class="tmd-date">${dow}</span>
         <span class="tmd-icon" aria-hidden="true">${tmdWeatherIcon(d.cond)}</span>
         <span class="tmd-rain ${rainClass}">${d.rain > 0 ? `${fmt(d.rain, 0)}<small>มม.</small>` : '0'}</span>
@@ -357,25 +379,32 @@ function renderTmdForecast() {
       </div>
     `;
   }).join('');
+  const n = tmd.next24ByAmphoe?.[ap];
+  $('tmd-next24').innerHTML = n
+    ? `ฝน 24 ชม. ข้างหน้า (อ.${esc(ap)}): <b style="color:${rainColor(n.rain)}">~${fmt(n.rain, 1)} มม.</b> · ${esc(rainLabel(n.rain))}${n.peakRain > 0 ? ` · ตกหนักสุดช่วง ${esc(fmtHour.format(new Date(n.peakTime)))} น.` : ''}<br><span class="muted">ตัวเลขในตาราง = ฝนรวมทั้งวันตามปฏิทิน</span>`
+    : '';
 }
 
 function drawTmd() {
   layers.tmd.clearLayers();
   if (!state.tmd?.byAmphoe) return;
   for (const [ap, list] of Object.entries(state.tmd.byAmphoe)) {
-    const bounds = state.districtBounds[ap];
-    if (!bounds) continue;
-    const center = bounds.getCenter();
+    const center = state.districtCenters[ap] || state.districtBounds[ap]?.getCenter();
+    if (!center) continue;
     const d0 = list[0];
     if (!d0) continue;
-    const borderCol = d0.rain > 35 ? '#f43f5e' : d0.rain > 10 ? '#fb923c' : d0.rain > 0 ? '#38bdf8' : '#64748b';
+    const n24 = state.tmd.next24ByAmphoe?.[ap];
+    const mm = n24 ? n24.rain : d0.rain;
+    const borderCol = mm > 35 ? '#f43f5e' : mm > 10 ? '#fb923c' : mm > 0 ? '#38bdf8' : '#64748b';
+    // Anchored at the district label and shifted below it so the two never overlap.
     const icon = L.divIcon({
       className: '',
-      html: `<div style="background:rgba(10,16,30,0.88);border:1.5px solid ${borderCol};border-radius:12px;padding:2px 8px;font-size:11px;font-weight:600;color:#fff;display:inline-flex;align-items:center;gap:4px;box-shadow:0 3px 10px rgba(0,0,0,0.6);white-space:nowrap;backdrop-filter:blur(6px);transform:translate(-50%,-50%);cursor:pointer;">${tmdWeatherIcon(d0.cond)} <span>${d0.rain > 0 ? `${fmt(d0.rain, 0)} มม.` : 'ไร้ฝน'}</span></div>`,
+      html: `<div class="tmd-pill" style="--b:${borderCol}">${tmdWeatherIcon(d0.cond)} <span>${mm > 0 ? `${fmt(mm, mm < 10 ? 1 : 0)} มม.` : 'ไม่มีฝน'}</span></div>`,
       iconSize: [0, 0],
     });
-    const m = L.marker(center, { icon, interactive: true, zIndexOffset: 300 });
-    m.bindTooltip(`<b>อ.${esc(ap)}</b><br>TMD พยากรณ์ฝน 24 ชม.: <b>${fmt(d0.rain, 1)} มม.</b> (${esc(d0.condText)})<br>อุณหภูมิ: ${fmt(d0.tcMin, 0)}–${fmt(d0.tcMax, 0)} °C`, { direction: 'top' });
+    const m = L.marker(center, { icon, interactive: true, zIndexOffset: 300, keyboard: false });
+    const peak = n24?.peakRain > 0 ? `<br>ตกหนักสุดช่วง ${esc(fmtHour.format(new Date(n24.peakTime)))} น. (${fmt(n24.peakRain, 1)} มม./ชม.)` : '';
+    m.bindTooltip(`<b>อ.${esc(ap)}</b><br>TMD ฝน 24 ชม. ข้างหน้า: <b>${fmt(mm, 1)} มม.</b>${peak}<br>วันนี้: ${esc(d0.condText)} · ${fmt(d0.tcMin, 0)}–${fmt(d0.tcMax, 0)} °C`, { direction: 'top', offset: [0, 4] });
     m.on('click', () => setAmphoe(ap, true));
     m.addTo(layers.tmd);
   }
@@ -390,7 +419,8 @@ function drawStations() {
   layers.stations.clearLayers();
   for (const s of state.stations) {
     const m = L.marker([s.lat, s.lon], { icon: stationIcon(s), zIndexOffset: (s.level || 0) * 100, keyboard: true, title: s.name });
-    m.bindTooltip(`<b>${esc(s.name)}</b> (${esc(s.code)})<br>${esc(LEVEL[s.level]?.label || '-')} · ${fmt(s.pct)}% ของความจุลำน้ำ`, { direction: 'top', offset: [0, -10] });
+    const t = trendArrow(s.change24h);
+    m.bindTooltip(`<b>${esc(s.name)}</b> (${esc(s.code)})<br>${esc(LEVEL[s.level]?.label || '-')} · ${fmt(s.pct)}% ของความจุลำน้ำ${t.sym ? `<br>${trendHtml(s.change24h)} ${esc(t.label)}` : ''}`, { direction: 'top', offset: [0, -10] });
     m.on('click', () => openStation(s.code));
     m.addTo(layers.stations);
   }
@@ -414,7 +444,7 @@ async function drawFlood() {
   layers.flood.clearLayers();
   const period = $('flood-period').value;
   if (!state.floodSummary?.periods?.[period]) return renderLegend();
-  floodCache[`${period}@${state.generatedAt}`] ??= await getJson(`live/flood_${period}.geojson`, { optional: true });
+  floodCache[`${period}@${state.generatedAt}`] ??= await getGeo(`live/flood_${period}.geojson`, { optional: true });
   const gj = floodCache[`${period}@${state.generatedAt}`];
   if (!gj) return;
   L.geoJSON(gj, {
@@ -431,7 +461,7 @@ $('flood-period').addEventListener('change', drawFlood);
 
 async function drawRisk() {
   if (layers.risk.getLayers().length) return;
-  state.freq ??= await getJson('risk/freq_hex.geojson', { optional: true });
+  state.freq ??= await getGeo('risk/freq_hex.geojson', { optional: true });
   if (!state.freq) return;
   L.geoJSON(state.freq, {
     renderer: riskRenderer,
@@ -536,13 +566,16 @@ let legendCollapsed = localStorage.getItem('flood_kp_legend_collapsed') !== null
 function renderLegend() {
   const parts = [];
   if (map.hasLayer(layers.incidents) && (state.incidents?.features?.length || 0) > 0) {
-    parts.push(`<div><h4>จุดเสี่ยงจากข่าว/ปภ. (${state.incidents.features.length} จุด)</h4><div class="legend-row"><span class="legend-item"><i style="background:var(--sev-3)"></i>อันตราย</span><span class="legend-item"><i style="background:var(--sev-2)"></i>เตือนภัย</span><span class="legend-item"><i style="background:var(--sev-1)"></i>เฝ้าระวัง</span></div></div>`);
+    parts.push(`<div><h4>จุดเสี่ยงจากข่าว/ปภ. (${state.incidents.features.length} จุด)</h4><div class="legend-row"><span class="legend-item"><i style="background:var(--sev-3)"></i>อันตราย</span><span class="legend-item"><i style="background:var(--sev-2)"></i>เตือนภัย</span><span class="legend-item"><i style="background:var(--sev-1)"></i>เฝ้าระวัง</span><span class="legend-item"><i style="background:var(--ok)"></i>กำลังคลี่คลาย</span></div></div>`);
   }
   if (map.hasLayer(layers.stations)) {
     parts.push(`<div><h4>ระดับน้ำ (% ความจุลำน้ำ)</h4><div class="legend-row">${[5, 4, 3, 2, 1].map((l) => `<span class="legend-item"><i style="background:${LEVEL[l].color}"></i>${LEVEL[l].label}</span>`).join('')}</div></div>`);
   }
   if (map.hasLayer(layers.rain)) {
     parts.push(`<div><h4>ฝน 24 ชม. (มม.)</h4><div class="legend-row">${[[0.1, '0.1–10'], [20, '10–35'], [50, '35–90'], [100, '> 90']].map(([v, t]) => `<span class="legend-item"><i style="background:${rainColor(v)}"></i>${t}</span>`).join('')}</div></div>`);
+  }
+  if (map.hasLayer(layers.tmd) && state.tmd) {
+    parts.push(`<div><h4>ป้ายใต้ชื่ออำเภอ</h4><div class="legend-row"><span class="legend-item">พยากรณ์ฝนสะสม 24 ชม. ข้างหน้า (กรมอุตุฯ)</span></div></div>`);
   }
   if (map.hasLayer(layers.flood) && state.floodSummary) {
     const p = state.floodSummary.periods?.[$('flood-period').value];
@@ -615,7 +648,7 @@ async function openStation(code, fly = false) {
         ['ระดับตลิ่ง (ม.รทก.)', fmt(s.bank, 2)],
         [s.toBank >= 0 ? 'ต่ำกว่าตลิ่ง (ม.)' : 'สูงกว่าตลิ่ง (ม.)', fmt(Math.abs(s.toBank ?? 0), 2)],
         ['ความจุลำน้ำ', `${fmt(s.pct)}%`],
-        ['เปลี่ยนแปลง 24 ชม.', `${signed(s.change24h)} ม.`],
+        ['เปลี่ยนแปลง 24 ชม.', `${trendHtml(s.change24h)} ${signed(s.change24h)} ม.`],
         ['ปริมาณน้ำไหลผ่าน', s.discharge != null ? `${fmt(s.discharge, 1)} ลบ.ม./วิ` : '–'],
       ].map(([k, v]) => `<div class="fact"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')
     : '';
@@ -623,6 +656,11 @@ async function openStation(code, fly = false) {
   if (!dialog.open) dialog.showModal();
   charts.forEach((c) => c.destroy());
   charts = [];
+  try {
+    await ensureChart();
+  } catch {
+    return; // offline without a cached Chart.js – facts are still shown
+  }
 
   if (s) {
     state.series ??= await getJson('live/series.json', { optional: true });
@@ -673,6 +711,15 @@ async function openStation(code, fly = false) {
 }
 
 // =============== Boot ===============
+/** Chart.js (~200 KB) is only needed for the station dialog, so it is loaded on first use. */
+let chartReady = null;
+function ensureChart() {
+  return (chartReady ??= loadScript('assets/vendor/chart.umd.min.js').then(() => chartDefaults(window.Chart)).catch((e) => {
+    chartReady = null;
+    throw e;
+  }));
+}
+
 async function refresh() {
   try {
     const st = await getJson('live/status.json');
@@ -684,18 +731,19 @@ async function refresh() {
 }
 
 (async function boot() {
-  chartDefaults(Chart);
+  initExtras({ map, state, layers, setAmphoe, openStation, setLayer, getFloodGeo: () => floodCache[`${$('flood-period').value}@${state.generatedAt}`] });
   try {
     await loadStatic();
     await loadLive();
   } catch (e) {
     console.error(e);
     $('status-label').textContent = 'โหลดข้อมูลไม่สำเร็จ';
-    $('status-desc').textContent = 'กรุณาลองใหม่อีกครั้งในภายหลัง';
+    $('status-desc').textContent = navigator.onLine ? 'กรุณาลองใหม่อีกครั้งในภายหลัง' : 'ไม่มีอินเทอร์เน็ต และยังไม่มีข้อมูลที่บันทึกไว้ในเครื่อง';
     return;
   }
   const m = location.hash.match(/station=([^&]+)/);
   if (m) openStation(decodeURIComponent(m[1]), true);
   setInterval(refresh, REFRESH_MS);
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && refresh());
+  window.addEventListener('online', refresh);
 })();

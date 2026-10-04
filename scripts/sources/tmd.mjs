@@ -7,20 +7,24 @@ import { representativePoint } from '../lib/geo.mjs';
 
 const BASE = 'https://data.tmd.go.th/nwpapi/v1/forecast/location';
 
+// Official code table: https://data.tmd.go.th/nwpapi/doc/apidoc/location/forecast_daily.html
 export const TMD_COND = {
   1: 'ท้องฟ้าแจ่มใส',
   2: 'มีเมฆบางส่วน',
-  3: 'มีเมฆเป็นส่วนมาก',
+  3: 'เมฆเป็นส่วนมาก',
   4: 'มีเมฆมาก',
-  5: 'ฝนเล็กน้อย',
+  5: 'ฝนตกเล็กน้อย',
   6: 'ฝนปานกลาง',
   7: 'ฝนตกหนัก',
   8: 'ฝนฟ้าคะนอง',
-  9: 'ฝนตกหนักมาก',
+  9: 'อากาศหนาวจัด',
+  10: 'อากาศหนาว',
+  11: 'อากาศเย็น',
+  12: 'อากาศร้อนจัด',
 };
 
 export function tmdCondLabel(code) {
-  return TMD_COND[code] || 'มีเมฆ';
+  return TMD_COND[code] || '–';
 }
 
 /**
@@ -44,6 +48,7 @@ export async function fetchTmdForecast() {
 
   // 1. Fetch 7-day daily forecast per district (concurrency 3)
   const byAmphoe = {};
+  const next24ByAmphoe = {};
   let provinceDaily = null;
 
   await mapLimit(amphoeFeatures, 3, async (f) => {
@@ -69,6 +74,25 @@ export async function fetchTmdForecast() {
     } catch (err) {
       console.warn(`[tmd] failed daily forecast for ${name}: ${err.message}`);
     }
+    // Rolling next-24h rainfall from the hourly model (starts at the current hour).
+    try {
+      const url = `${BASE}/hourly/at?lat=${pt[1].toFixed(4)}&lon=${pt[0].toFixed(4)}&fields=rain,cond&duration=24`;
+      const res = await fetchJson(url, { headers, timeoutMs: 30000, retries: 2 });
+      const raw = res?.WeatherForecasts?.[0]?.forecasts || [];
+      if (raw.length) {
+        const total = raw.reduce((s, d) => s + (d.data.rain || 0), 0);
+        const peak = raw.reduce((m, d) => ((d.data.rain || 0) > (m?.data.rain || 0) ? d : m), null);
+        next24ByAmphoe[name] = {
+          rain: round(total, 1),
+          from: raw[0].time,
+          to: raw[raw.length - 1].time,
+          peakTime: peak?.data.rain > 0 ? peak.time : null,
+          peakRain: peak ? round(peak.data.rain, 1) : 0,
+        };
+      }
+    } catch (err) {
+      console.warn(`[tmd] failed hourly forecast for ${name}: ${err.message}`);
+    }
   });
 
   // 2. Fetch 48-hour hourly forecast for province centre (เมืองกำแพงเพชร: 16.4713, 99.5266)
@@ -93,10 +117,10 @@ export async function fetchTmdForecast() {
   let maxRainNext24h = null;
   let maxRainNext7d = null;
 
+  for (const [ap, n] of Object.entries(next24ByAmphoe)) {
+    if (maxRainNext24h == null || n.rain > maxRainNext24h.rain) maxRainNext24h = { amphoe: ap, ...n };
+  }
   for (const [ap, list] of Object.entries(byAmphoe)) {
-    if (list[0] && (maxRainNext24h == null || list[0].rain > maxRainNext24h.rain)) {
-      maxRainNext24h = { amphoe: ap, rain: list[0].rain, date: list[0].date, condText: list[0].condText };
-    }
     for (const d of list) {
       if (maxRainNext7d == null || d.rain > maxRainNext7d.rain) {
         maxRainNext7d = { amphoe: ap, rain: d.rain, date: d.date, condText: d.condText };
@@ -114,6 +138,7 @@ export async function fetchTmdForecast() {
     },
     hourly,
     byAmphoe,
+    next24ByAmphoe,
     maxRainNext24h,
     maxRainNext7d,
   };

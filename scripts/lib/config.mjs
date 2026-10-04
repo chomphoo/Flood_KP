@@ -20,6 +20,9 @@ export const CONFIG = {
   provinceName: 'กำแพงเพชร',
   /** Where the previous deployment lives, used to reuse data between runs (no commits needed). */
   prevBaseUrl: process.env.PREV_BASE_URL || 'https://chomphoo.github.io/Flood_KP/data/live/',
+  siteUrl: process.env.SITE_URL || 'https://chomphoo.github.io/Flood_KP/',
+  /** Default ntfy.sh topic shown on the site (the workflow may override with NTFY_TOPIC). */
+  ntfyTopic: process.env.NTFY_TOPIC || 'floodkp-kamphaengphet',
   dirs: {
     out: path.join(ROOT, 'out', 'live'), // generated every run
     store: process.env.STORE_DIR || path.join(ROOT, 'store'), // checkout of the `data` branch (persistent)

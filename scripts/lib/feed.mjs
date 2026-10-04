@@ -58,6 +58,7 @@ export function buildConditions({ stations = [], rain = [], flood = null, glofas
   const incFeatures = Array.isArray(incidents) ? incidents : (incidents?.features || []);
   for (const inc of incFeatures) {
     const p = inc.properties;
+    const recovering = p.phase === 'recovering';
     out.push({
       id: p.id,
       cat: 'incident',
@@ -68,23 +69,43 @@ export function buildConditions({ stations = [], rain = [], flood = null, glofas
       lon: inc.geometry?.coordinates?.[0],
       amphoe: p.amphoe,
       ref: p.id,
-      title: `รายงานสถานการณ์ — ${p.locName}`,
-      detail: `${p.title} (${p.source}${p.count > 1 ? ` และอีก ${p.count - 1} สำนัก` : ''})`,
+      phase: p.phase,
+      title: `${recovering ? 'กำลังคลี่คลาย' : 'รายงานสถานการณ์'} — ${p.locName}`,
+      detail: `${p.title} (${p.source}${p.count > 1 ? ` และอีก ${p.count - 1} รายงาน` : ''})`,
       url: p.url,
     });
   }
-  if (tmd?.maxRainNext24h && tmd.maxRainNext24h.rain >= 35) {
-    const isHeavy = tmd.maxRainNext24h.rain > 90;
+  // Province-wide news that names no tambon/amphoe: listed in the feed only, never pinned on the map.
+  const provNews = Array.isArray(incidents) ? [] : (incidents?.provinceNews || []);
+  if (provNews.length) {
+    const top = provNews[0];
+    const activeSev = Math.max(...provNews.filter((n) => !n.recovering).map((n) => n.sev ?? 1), 0);
+    out.push({
+      id: 'news:province',
+      cat: 'incident',
+      sev: Math.min(2, Math.max(1, activeSev || 1)),
+      source: 'รายงานข่าว (ระดับจังหวัด)',
+      time: top.time || nowIso,
+      ref: 'news:province',
+      title: `ข่าวระดับจังหวัด — จ.กำแพงเพชร`,
+      detail: `${top.title} (${top.source}${provNews.length > 1 ? ` และข่าวอื่นอีก ${provNews.length - 1} ข่าว` : ''}) · ไม่ระบุตำบล/อำเภอ จึงไม่แสดงบนแผนที่`,
+      url: top.url,
+    });
+  }
+  const n24 = tmd?.maxRainNext24h;
+  if (n24 && n24.rain >= 35) {
+    const isHeavy = n24.rain > 90;
+    const peak = n24.peakTime ? ` · ตกหนักสุดช่วง ${new Date(n24.peakTime).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', weekday: 'short', hour: '2-digit', minute: '2-digit' })} น.` : '';
     out.push({
       id: 'tmd:heavyrain',
       cat: 'forecast',
       sev: isHeavy ? 2 : 1,
       source: 'กรมอุตุนิยมวิทยา (TMD)',
       time: nowIso,
-      amphoe: tmd.maxRainNext24h.amphoe,
+      amphoe: n24.amphoe,
       ref: 'tmd',
-      title: `พยากรณ์ฝนตก${isHeavy ? 'หนักมาก' : 'หนัก'} — อ.${tmd.maxRainNext24h.amphoe}`,
-      detail: `คาดการณ์ฝนสูงสุดใน 24 ชม. ~${fmt(tmd.maxRainNext24h.rain, 1)} มม. (${tmd.maxRainNext24h.condText})`,
+      title: `พยากรณ์ฝนตก${isHeavy ? 'หนักมาก' : 'หนัก'} — อ.${n24.amphoe}`,
+      detail: `ฝนสะสม 24 ชม. ข้างหน้า ~${fmt(n24.rain, 1)} มม.${peak}`,
     });
   }
   return out.sort((a, b) => b.sev - a.sev || String(b.time).localeCompare(String(a.time)));

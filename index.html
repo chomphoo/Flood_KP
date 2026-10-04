@@ -12,6 +12,9 @@
   <meta property="og:locale" content="th_TH">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232dd4bf'/%3E%3Cpath d='M16 6c-3 5-7 8.5-7 13a7 7 0 0 0 14 0c0-4.5-4-8-7-13z' fill='%23062a26'/%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="น้ำท่วม กพ.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -39,8 +42,20 @@
 
   <main class="layout">
     <aside class="panel" aria-label="รายงานสถานการณ์">
+      <div class="notice notice-offline" id="offline-banner" role="status" hidden>
+        <b>ออฟไลน์</b> — กำลังแสดงข้อมูลล่าสุดที่บันทึกไว้ในเครื่อง <span id="offline-time"></span>
+      </div>
+      <div class="notice notice-install" id="install-banner" hidden>
+        <span id="install-text">ติดตั้งเว็บนี้เป็นแอปบนหน้าจอ เปิดได้เร็วและดูข้อมูลล่าสุดได้แม้ไม่มีเน็ต</span>
+        <span class="notice-actions">
+          <button class="btn btn-primary" id="install-btn" hidden>ติดตั้ง</button>
+          <button class="btn btn-ghost" id="install-dismiss" aria-label="ปิดข้อความ">ไว้ทีหลัง</button>
+        </span>
+      </div>
+
       <section class="status-hero" id="status-hero" data-level="0" aria-live="polite">
         <div class="eyebrow">สถานการณ์น้ำ จังหวัดกำแพงเพชร</div>
+        <button class="hero-share" id="share-btn" aria-label="แชร์สถานการณ์" title="แชร์สถานการณ์ (LINE / แอปอื่น)"></button>
         <div class="status-label"><span class="status-ring" aria-hidden="true"></span><span id="status-label">กำลังโหลด…</span></div>
         <div class="status-desc" id="status-desc"></div>
         <ul class="reasons" id="status-reasons"></ul>
@@ -55,6 +70,13 @@
           <button class="tab" role="tab" id="tab-stations" aria-selected="false" aria-controls="pane-stations">สถานีวัดน้ำ</button>
         </div>
         <div class="toolbar" style="margin-top:10px">
+          <div class="search" id="search-box">
+            <label for="place-search" class="visually-hidden">ค้นหาตำบล หมู่บ้าน หรือสถานที่</label>
+            <span class="search-icon" id="search-icon" aria-hidden="true"></span>
+            <input type="search" id="place-search" class="search-input" placeholder="ค้นหาตำบล / หมู่บ้าน…" autocomplete="off" enterkeyhint="search"
+              role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list">
+            <ul class="search-results" id="search-results" role="listbox" aria-label="ผลการค้นหา" hidden></ul>
+          </div>
           <label for="amphoe-filter" class="visually-hidden">กรองตามอำเภอ</label>
           <select id="amphoe-filter" class="select"><option value="">ทุกอำเภอ</option></select>
         </div>
@@ -69,6 +91,33 @@
           <span class="badge" id="tmd-badge">ทุกอำเภอ</span>
         </div>
         <div class="tmd-forecast-grid" id="tmd-forecast-grid"></div>
+        <p class="tmd-next24" id="tmd-next24"></p>
+      </section>
+
+      <section class="card emergency-card" id="emergency-card" aria-labelledby="em-title">
+        <div class="section-title"><h2 id="em-title">ข้อมูลฉุกเฉิน</h2></div>
+        <div class="hotlines" id="hotlines"></div>
+        <div id="em-contacts"></div>
+        <div id="em-roads"></div>
+        <div id="em-shelters"></div>
+      </section>
+
+      <section class="card notify-card" id="notify-card" aria-labelledby="nt-title">
+        <div class="section-title"><h2 id="nt-title">รับการแจ้งเตือน</h2></div>
+        <div class="notify-opt">
+          <div>
+            <b>แจ้งเตือนบนเบราว์เซอร์นี้</b>
+            <p class="muted" id="local-notify-desc">แจ้งเมื่อมีสถานการณ์ระดับ “เตือนภัย” ขึ้นไปใหม่ ขณะที่เปิดหน้าเว็บหรือแอปค้างไว้ (ปิดเว็บแล้วจะไม่แจ้ง)</p>
+          </div>
+          <button class="btn" id="local-notify-btn">เปิดการแจ้งเตือน</button>
+        </div>
+        <div class="notify-opt">
+          <div>
+            <b>แจ้งเตือนผ่านแอป ntfy (ฟรี ไม่ต้องสมัคร)</b>
+            <p class="muted">ได้รับแจ้งแม้ปิดเว็บ: ติดตั้งแอป <a href="https://ntfy.sh/" target="_blank" rel="noopener">ntfy</a> (Android / iOS) แล้วกด “Subscribe” หัวข้อ <code id="ntfy-topic">floodkp-kamphaengphet</code> ระบบตรวจทุก 30 นาที</p>
+          </div>
+          <a class="btn" id="ntfy-link" href="https://ntfy.sh/floodkp-kamphaengphet" target="_blank" rel="noopener">เปิดหัวข้อ</a>
+        </div>
       </section>
 
       <section class="card">
@@ -103,6 +152,7 @@
       <button class="layer-btn" id="layer-btn" aria-expanded="false" aria-controls="layer-panel" aria-label="ตั้งค่าชั้นข้อมูลแผนที่">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
       </button>
+      <button class="layer-btn locate-btn" id="locate-btn" aria-label="ตำแหน่งของฉัน – สรุปความเสี่ยงรอบตัว" title="ตำแหน่งของฉัน"></button>
       <div class="layer-panel" id="layer-panel" hidden>
         <fieldset>
           <legend>แผนที่ฐาน</legend>
@@ -153,7 +203,6 @@
   </dialog>
 
   <script src="assets/vendor/leaflet/leaflet.js" defer></script>
-  <script src="assets/vendor/chart.umd.min.js" defer></script>
   <script type="module" src="assets/js/app.js"></script>
 </body>
 </html>
