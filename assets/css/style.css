@@ -282,7 +282,11 @@ button, select, input { font: inherit; color: inherit; }
   position: absolute; z-index: 500; pointer-events: none;
   inset: 12px; display: flex; flex-direction: column; justify-content: space-between;
 }
-.map-ui > * { pointer-events: auto; }
+/* Wrappers stretch full-width, so they must pass clicks through to the map;
+   only the actual controls inside them catch the pointer. */
+.map-ui > * { pointer-events: none; }
+.map-ui > * > * { pointer-events: auto; }
+.map-ui-bottom { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
